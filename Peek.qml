@@ -34,10 +34,8 @@ Item {
   property string fontFamily: Style.font.menuFamily
   readonly property int cornerRadius: Style.cornerRadius
 
-  readonly property int outerMargin: Style.space(48)
-  readonly property int gap: Style.space(24)
-  readonly property int labelHeight: Math.max(Style.space(28), Style.font.title + Style.space(12))
-  readonly property int headerHeight: Style.font.heading + Style.space(24)
+  // Previews fill the screen edge to edge, with just a hairline between them.
+  readonly property int gap: Math.max(2, Style.space(4))
 
   // --- Lifecycle -----------------------------------------------------------
 
@@ -123,21 +121,33 @@ Item {
   readonly property var focusedGeometry: root.monitorGeometry(null)
   readonly property real aspect: root.focusedGeometry.w / Math.max(1, root.focusedGeometry.h)
 
-  // Pick the column count that gives the biggest previews that still fit.
+  // Split the whole screen into a grid of cells, picking the column count
+  // that makes the screen-shaped previews inside the cells biggest. A short
+  // last row gets wider cells so it still spans the screen.
   readonly property var layout: {
     var n = Math.max(1, root.cards.length)
-    var W = panel.width - root.outerMargin * 2
-    var H = panel.height - root.outerMargin * 2 - root.headerHeight
-    var best = { cols: 1, w: 0 }
+    var W = panel.width
+    var H = panel.height
+    var best = { cols: 1, rows: 1, scale: 0 }
     for (var c = 1; c <= n; c++) {
       var rows = Math.ceil(n / c)
-      var byWidth = (W - (c - 1) * root.gap) / c
-      var byHeight = ((H - (rows - 1) * root.gap) / rows - root.labelHeight) * root.aspect
-      var w = Math.min(byWidth, byHeight, W * 0.46)
-      if (w > best.w + 0.5) best = { cols: c, w: w }
+      var cellW = (W - (c - 1) * root.gap) / c
+      var cellH = (H - (rows - 1) * root.gap) / rows
+      var scale = Math.min(cellW / root.aspect, cellH)
+      if (scale > best.scale + 0.5) best = { cols: c, rows: rows, scale: scale }
     }
-    var cw = Math.max(80, Math.floor(best.w))
-    return { cols: best.cols, w: cw, h: Math.round(cw / root.aspect) }
+    return { cols: best.cols, rows: best.rows,
+             cellH: (H - (best.rows - 1) * root.gap) / best.rows }
+  }
+
+  function cellRect(index) {
+    var n = root.cards.length
+    var cols = root.layout.cols
+    var row = Math.floor(index / cols)
+    var inRow = Math.min(cols, n - row * cols)
+    var col = index - row * cols
+    var w = (panel.width - (inRow - 1) * root.gap) / inRow
+    return { x: col * (w + root.gap), y: row * (root.layout.cellH + root.gap), w: w, h: root.layout.cellH }
   }
 
   // Window geometry straight from `hyprctl clients -j`, keyed by address.
@@ -290,30 +300,36 @@ Item {
       }
     }
 
-    Text {
-      id: header
+    // Title of the hovered window, floating over the bottom of the screen.
+    Rectangle {
+      z: 10
+      visible: root.hoverTitle !== ""
       anchors.horizontalCenter: parent.horizontalCenter
-      anchors.top: parent.top
-      anchors.topMargin: root.outerMargin
-      height: root.headerHeight
-      textFormat: Text.PlainText
-      text: root.hoverTitle !== "" ? root.hoverTitle
-        : root.cards.length + (root.cards.length === 1 ? " workspace" : " workspaces")
-      color: root.foreground
-      opacity: root.hoverTitle !== "" ? 1 : 0.6
-      font.family: root.fontFamily
-      font.pixelSize: Style.font.heading
-      elide: Text.ElideRight
-      width: Math.min(implicitWidth, parent.width - root.outerMargin * 2)
+      anchors.bottom: parent.bottom
+      anchors.bottomMargin: Style.space(16)
+      width: Math.min(hoverText.implicitWidth + Style.space(28), parent.width - Style.space(32))
+      height: hoverText.implicitHeight + Style.space(14)
+      radius: height / 2
+      color: Qt.rgba(root.background.r, root.background.g, root.background.b, 0.92)
+      border.width: 1
+      border.color: Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.25)
+
+      Text {
+        id: hoverText
+        anchors.centerIn: parent
+        width: Math.min(implicitWidth, parent.parent.width - Style.space(60))
+        textFormat: Text.PlainText
+        text: root.hoverTitle
+        color: root.foreground
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.title
+        elide: Text.ElideRight
+      }
     }
 
-    Grid {
+    Item {
       id: grid
-      anchors.horizontalCenter: parent.horizontalCenter
-      y: root.outerMargin + root.headerHeight
-        + Math.max(0, (panel.height - root.outerMargin * 2 - root.headerHeight - implicitHeight) / 2)
-      columns: root.layout.cols
-      spacing: root.gap
+      anchors.fill: parent
 
       Repeater {
         model: root.cards
@@ -329,51 +345,69 @@ Item {
           readonly property bool selected: index === root.selectedIndex
           readonly property var geo: root.monitorGeometry(ws)
 
-          width: root.layout.w
-          height: root.layout.h + root.labelHeight
+          readonly property var cell: root.cellRect(index)
+          x: cell.x
+          y: cell.y
+          width: cell.w
+          height: cell.h
 
-          // Workspace number + app icons
-          Row {
-            id: label
-            height: root.labelHeight
-            spacing: Style.space(8)
-            anchors.left: parent.left
-
-            Text {
-              anchors.verticalCenter: parent.verticalCenter
-              textFormat: Text.PlainText
-              text: card.scratch ? "S" : String(card.ws.id)
-              color: card.current || card.selected ? root.accent : root.foreground
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.title
-              font.bold: true
-            }
-
-            Text {
-              anchors.verticalCenter: parent.verticalCenter
-              visible: card.scratch || card.ws.toplevels.values.length === 0
-              textFormat: Text.PlainText
-              text: card.scratch ? "scratchpad" : "empty"
-              color: root.foreground
-              opacity: 0.55
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-            }
-          }
-
-          // Monitor-shaped frame
+          // The whole cell; the workspace's monitor is fitted inside it.
           Rectangle {
             id: frame
-            anchors.top: label.bottom
-            width: parent.width
-            height: root.layout.h
+            anchors.fill: parent
             radius: root.cornerRadius
             color: Qt.darker(Qt.rgba(root.background.r, root.background.g, root.background.b, 1), 1.25)
             clip: true
-            border.width: card.selected || card.current ? Math.max(2, Style.space(3)) : 1
-            border.color: card.selected ? root.accent
-              : card.current ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.5)
-              : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
+
+            // Border drawn over the windows, which reach the cell's edges.
+            Rectangle {
+              anchors.fill: parent
+              z: 9000
+              color: "transparent"
+              radius: root.cornerRadius
+              border.width: card.selected || card.current ? Math.max(2, Style.space(3)) : 1
+              border.color: card.selected ? root.accent
+                : card.current ? Qt.rgba(root.accent.r, root.accent.g, root.accent.b, 0.5)
+                : Qt.rgba(root.foreground.r, root.foreground.g, root.foreground.b, 0.15)
+            }
+
+            // Workspace number badge, top-left over the preview.
+            Rectangle {
+              z: 9001
+              x: Style.space(10)
+              y: Style.space(10)
+              width: badgeRow.implicitWidth + Style.space(16)
+              height: badgeRow.implicitHeight + Style.space(8)
+              radius: Math.min(height / 2, Math.max(root.cornerRadius, 4))
+              color: card.selected || card.current ? root.accent
+                : Qt.rgba(root.background.r, root.background.g, root.background.b, 0.85)
+
+              Row {
+                id: badgeRow
+                anchors.centerIn: parent
+                spacing: Style.space(6)
+
+                Text {
+                  textFormat: Text.PlainText
+                  text: card.scratch ? "S" : String(card.ws.id)
+                  color: card.selected || card.current ? root.background : root.foreground
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.heading
+                  font.bold: true
+                }
+
+                Text {
+                  anchors.verticalCenter: parent.verticalCenter
+                  visible: card.scratch || card.ws.toplevels.values.length === 0
+                  textFormat: Text.PlainText
+                  text: card.scratch ? "scratchpad" : "empty"
+                  color: card.selected || card.current ? root.background : root.foreground
+                  opacity: 0.75
+                  font.family: root.fontFamily
+                  font.pixelSize: Style.font.body
+                }
+              }
+            }
 
             // Fit this workspace's monitor inside the frame.
             readonly property real s: Math.min(width / card.geo.w, height / card.geo.h)
