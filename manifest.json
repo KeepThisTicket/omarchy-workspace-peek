@@ -1,0 +1,15 @@
+{
+  "schemaVersion": 1,
+  "id": "kov.workspace-peek",
+  "name": "Workspace peek",
+  "version": "1.0.0",
+  "author": "KeepThisTicket",
+  "description": "Live previews of every occupied workspace at once; click or type a number to jump there",
+  "kinds": [
+    "overlay"
+  ],
+  "keepLoaded": true,
+  "entryPoints": {
+    "overlay": "Peek.qml"
+  }
+}
